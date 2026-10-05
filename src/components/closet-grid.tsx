@@ -49,6 +49,7 @@ export function ClosetGrid({ items }: { items: Piece[] }) {
             key={item.id}
             id={item.id}
             name={item.name}
+            category={item.category}
             material={item.material}
             warmth={item.warmth}
             status={item.status}

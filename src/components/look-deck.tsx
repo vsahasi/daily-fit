@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState, type PointerEvent } from "rea
 import { voteLook } from "@/app/actions";
 import { clothName } from "@/lib/names";
 import type { LookCard } from "@/lib/looks";
+import { LookPhotos } from "@/components/look-photos";
 
 const PHOTO = 4;
 
@@ -69,7 +70,6 @@ export function LookDeck({
   }, [decide]);
 
   const hero = current ? pickHero(current.pieces) : null;
-  const rest = current ? current.pieces.filter((piece) => piece.id !== hero?.id) : [];
 
   return (
     <div>
@@ -88,28 +88,7 @@ export function LookDeck({
 
       {current && hero ? (
         <article className="select-none" onPointerDown={onPointerDown} onPointerUp={onPointerUp}>
-          <div className="grid gap-2 lg:grid-cols-2">
-            <figure className="bg-snow">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={`/api/media/item/${hero.id}?v=${PHOTO}`}
-                alt={hero.name}
-                className="aspect-[3/4] w-full object-cover"
-                draggable={false}
-              />
-            </figure>
-            {rest[0] ? (
-              <figure className="bg-snow">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={`/api/media/item/${rest[0].id}?v=${PHOTO}`}
-                  alt={rest[0].name}
-                  className="aspect-[3/4] w-full object-cover"
-                  draggable={false}
-                />
-              </figure>
-            ) : null}
-          </div>
+          <LookPhotos pieces={current.pieces} version={PHOTO} draggable={false} />
 
           <ul className="mt-8 space-y-1">
             {current.pieces.map((piece) => (

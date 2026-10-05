@@ -15,8 +15,10 @@ export function clothWeight(warmth?: number | null) {
 export function clothFacts(opts: {
   warmth?: number | null;
   inWash?: boolean;
+  category?: string;
 }) {
   if (opts.inWash) return "In the wash";
+  if (opts.category === "shoes") return "";
   return clothWeight(opts.warmth) ?? "";
 }
 

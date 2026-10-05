@@ -1,8 +1,8 @@
 import OpenAI from "openai";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
+import { pairKind } from "@/lib/kinds";
 import { chatModel } from "@/lib/openai";
-import { buildTaste } from "@/lib/taste";
 import type { StyleProfile } from "@/lib/types";
 import { wearHistory } from "@/lib/wear";
 
@@ -61,10 +61,16 @@ export async function refreshStyle(userId: string) {
     pairsWith: JSON.parse(item.pairsWith || "[]") as string[],
   }));
 
-  const votes = await prisma.lookVote.findMany({ where: { userId } });
-  // Only the worn and skipped signals matter here, so the reference date is not important.
+  const votes = await prisma.lookVote.findMany({ where: { userId, verdict: "like" } });
+  // Only the worn looks matter here, so the reference date is not important.
   const history = await wearHistory(userId, new Date().toISOString().slice(0, 10));
-  const taste = buildTaste(items, votes, history.signals);
+  const byId = new Map(items.map((item) => [item.id, item]));
+  const describe = (ids: string[]) => {
+    const pieces = ids.map((id) => byId.get(id)).filter((item): item is (typeof items)[number] => Boolean(item));
+    return { pieces: pieces.map((item) => item.name), shape: pairKind(pieces) };
+  };
+  const liked = votes.map((vote) => describe(JSON.parse(vote.itemIds) as string[]));
+  const worn = history.worn.slice(0, 30).map((row) => describe(row.itemIds));
 
   const completion = await openai.chat.completions.create({
     model: chatModel(),
@@ -72,27 +78,17 @@ export async function refreshStyle(userId: string) {
     messages: [
       {
         role: "system",
-        content: `Infer a sticky personal style from this closet AND from like/pass votes on real combinations.
+        content: `Infer a sticky personal style from this closet, the looks this person said they liked, and the looks they actually wore.
 JSON with these exact types:
-summary: string, 2-3 concrete sentences grounded in the votes when present
-palette: string[] of dominant colors they actually like wearing together
+summary: string, 2-3 concrete sentences grounded in the liked and worn looks when present
+palette: string[] of dominant colors they actually wear together
 silhouettes: string[]
-do: string[] how to dress this person, from the likes
-dont: string[] what they pass on
+do: string[] how to dress this person, in classic menswear pairings the closet can make
+dont: string[] what to avoid, from what the closet lacks or what never gets worn
 formality: one string describing the range they actually wear, not just own
-Do not make them trendier than the clothes. If votes say tees and cargos, say tees and cargos. Do not talk yourself into linen and polos because the closet owns them.`,
+Do not make them trendier than the clothes. Prefer proven pairings (a tee on chinos, an oxford on chinos, a hoodie on joggers) over novelty.`,
       },
-      { role: "user", content: JSON.stringify({
-        wardrobe,
-        looks: {
-          votes: taste.votes,
-          likes: taste.likes,
-          passes: taste.passes,
-          assumptions: taste.assumptions,
-          pairings: taste.pairRate,
-          pieces: taste.kindRate,
-        },
-      }) },
+      { role: "user", content: JSON.stringify({ wardrobe, liked, worn }) },
     ],
   });
 

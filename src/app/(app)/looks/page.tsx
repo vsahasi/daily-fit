@@ -20,8 +20,8 @@ export default async function LooksPage({
     <Shell bleed>
       <PageIntro title="Looks">
         <p>
-          Like the pairing, not the forecast. Weather is off while you train the closet. Hot, cold,
-          and beach still mean those days.
+          Like the pairing, not the forecast. A like nudges Today toward that kind of look; a pass
+          keeps that exact stack away. Weather is off here. Hot, cold, and beach still mean those days.
         </p>
       </PageIntro>
       <LookDeck

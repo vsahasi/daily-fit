@@ -28,6 +28,26 @@ model User {
   pushEndpoint      String?
   pushP256dh        String?
   pushAuth          String?
+  suggestions       Suggestion[]
+  // The last time a "something new for the closet" ping went out.
+  shopPingedAt      DateTime?
+}
+
+// One piece that would fill a gap in the closet. Written by the shop suggester, sent one at a time.
+model Suggestion {
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt   DateTime  @default(now())
+  // Which gap it fills, from the gap analysis: "shell", "jeans", "long-sleeve base", ...
+  gap         String
+  item        String
+  why         String
+  search      String
+  sentAt      DateTime?
+  dismissedAt DateTime?
+
+  @@index([userId, createdAt])
 }
 
 model Item {
@@ -70,7 +90,7 @@ model Outfit {
   weatherJson String
   reason      String
   collagePath String?
-  // suggested | worn | skipped (turned down) | replaced (a piece went to the wash) | event
+  // suggested | worn | skipped (turned down) | swapped (one piece traded out) | replaced (a piece went to the wash) | event
   status      String   @default("suggested")
   smsSid      String?
   // Set when the look is confirmed as worn. That confirmation drives rotation and taste.

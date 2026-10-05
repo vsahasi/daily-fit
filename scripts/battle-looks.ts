@@ -5,6 +5,7 @@ import { pickLook, scoreLook } from "../src/lib/pair";
 import type { Weather } from "../src/lib/types";
 
 const PHONE = process.env.INGEST_PHONE ?? "";
+if (!PHONE) throw new Error("Set INGEST_PHONE to the account's phone number, in E.164 form");
 
 const mild: Weather = {
   date: "2026-09-16",

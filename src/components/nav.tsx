@@ -9,11 +9,12 @@ const links = [
   { href: "/looks", label: "Looks" },
   { href: "/event", label: "Event" },
   { href: "/wash", label: "Wash" },
+  { href: "/shop", label: "New" },
   { href: "/settings", label: "Account" },
 ];
 
 /** Pages reached from Account rather than the bar. They light up Account while open. */
-const underAccount = ["/style", "/shop"];
+const underAccount = ["/style"];
 
 function NavLink({ href, label, active }: { href: string; label: string; active: boolean }) {
   return (

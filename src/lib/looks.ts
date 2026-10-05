@@ -1,9 +1,9 @@
 import type { User } from "@prisma/client";
 import { prisma } from "@/lib/db";
+import { buildLikes } from "@/lib/likes";
 import { LOOK_SCENARIOS, scenarioBySlug, type Occasion } from "@/lib/occasion";
 import { rankLooks } from "@/lib/pair";
 import { lookKey, prefsFromVotes, votedKeys } from "@/lib/prefs";
-import { buildTaste } from "@/lib/taste";
 import type { Weather } from "@/lib/types";
 import { fetchWeather } from "@/lib/weather";
 
@@ -52,11 +52,11 @@ export async function getLookDeck(user: User, slug?: string | null): Promise<{
   const weather = MILD;
   const ignoreWeather = scenario.occasion.climate === "forecast";
   const [items, votes] = await Promise.all([
-    prisma.item.findMany({ where: { userId: user.id, status: "available", NOT: { imagePath: "" } } }),
+    prisma.item.findMany({ where: { userId: user.id, NOT: { imagePath: "" } } }),
     prisma.lookVote.findMany({ where: { userId: user.id } }),
   ]);
   const pref = prefsFromVotes(votes);
-  const taste = buildTaste(items, votes);
+  const likes = buildLikes(items, pref.liked);
   const skipped = votedKeys(votes);
   const ranked = rankLooks({
     items,
@@ -67,7 +67,7 @@ export async function getLookDeck(user: User, slug?: string | null): Promise<{
     pref,
     limit: 16,
     ignoreWeather,
-    taste,
+    likes,
   });
   const looks = ranked.map((look) => ({
     itemIds: look.itemIds,

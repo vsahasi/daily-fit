@@ -3,20 +3,20 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { clearSessionCookie } from "@/lib/auth";
-import { todayInZone } from "@/lib/dates";
+import { shiftDate, todayInZone } from "@/lib/dates";
 import { prisma } from "@/lib/db";
 import { ingestPhoto } from "@/lib/ingest";
 import { finishLaundry, markClean, putInWash } from "@/lib/laundry";
 import { sendEventPing, sendLookPing } from "@/lib/morning";
-import { generateOutfit } from "@/lib/outfit";
+import { generateOutfit, swapOutfitPiece } from "@/lib/outfit";
 import { parseOccasion } from "@/lib/occasion";
 import { comboKeyFromIds } from "@/lib/pair";
-import { suggestPurchases } from "@/lib/shop";
+import { dismissIdea, suggestPurchases } from "@/lib/shop";
 import { refreshStyle } from "@/lib/style";
 import { getCurrentUser, revalidateUser } from "@/lib/user";
 import { deleteObject } from "@/lib/storage";
 import { decidePiece, lookForDate, unwearOutfit, wearOutfit } from "@/lib/wear";
-import { geocodeCity, reverseGeocode } from "@/lib/weather";
+import { geocodeCity, reverseGeocode, validZone } from "@/lib/weather";
 
 export async function uploadOne(formData: FormData) {
   const user = await getCurrentUser();
@@ -37,7 +37,7 @@ export async function deleteItem(itemId: string) {
     await deleteObject(item.imagePath).catch(() => undefined);
   }
   await prisma.item.delete({ where: { id: item.id } });
-  await refreshStyle(user.id);
+  await refreshStyle(user.id).catch(() => undefined);
   revalidatePath("/");
 }
 
@@ -69,20 +69,45 @@ export async function didLaundry() {
   revalidatePath("/today");
 }
 
-export async function makeTodayOutfit() {
-  const user = await getCurrentUser();
-  await generateOutfit(user, true);
-  revalidatePath("/today");
+/**
+ * The look the user is acting on must be the one on their screen. A page left open
+ * overnight, or a second tab, sends an old id: then nothing changes but the page.
+ */
+/** The day a form belongs to: today, or tomorrow when it came from the evening preview. */
+function formDay(timezone: string, formData?: FormData) {
+  const today = todayInZone(timezone);
+  return formData?.get("day") === "tomorrow" ? shiftDate(today, 1) : today;
 }
 
-export async function skipTodayOutfit() {
+function backTo(formData?: FormData) {
+  return formData?.get("day") === "tomorrow" ? "/today?day=tomorrow&" : "/today?";
+}
+
+async function currentLook(userId: string, timezone: string, formData?: FormData) {
+  const outfit = await lookForDate(userId, formDay(timezone, formData));
+  const seen = formData ? String(formData.get("outfitId") ?? "") : "";
+  if (!outfit || (seen && seen !== outfit.id)) return null;
+  return outfit;
+}
+
+/** "Another look" and "Not this": the current look is turned down and a new one made. A failure keeps the current look. */
+export async function makeTodayOutfit(formData?: FormData) {
   const user = await getCurrentUser();
-  await prisma.outfit.updateMany({
-    where: { userId: user.id, date: todayInZone(user.timezone), status: "suggested" },
-    data: { status: "skipped" },
-  });
-  await generateOutfit(user);
+  const seen = formData ? String(formData.get("outfitId") ?? "") : "";
+  const day = formDay(user.timezone, formData);
+  const outfit = await lookForDate(user.id, day);
+  let note = "";
+  if (!seen || !outfit || seen === outfit.id) {
+    await generateOutfit(user, true, undefined, day).catch((error) => {
+      note = /clean top/.test(String(error)) ? "That is every look that is clean today." : "Could not make another look just now. Try again in a minute.";
+    });
+  }
   revalidatePath("/today");
+  if (note) redirect(`${backTo(formData)}note=${encodeURIComponent(note)}`);
+}
+
+export async function skipTodayOutfit(formData?: FormData) {
+  return makeTodayOutfit(formData);
 }
 
 export async function dressForEvent(formData: FormData) {
@@ -110,21 +135,80 @@ function revalidateCloset() {
   revalidatePath("/");
 }
 
-/** "Wearing this": the confirmation that rotation and taste are built on. */
-export async function wearTodayOutfit() {
+/** "Wearing this": the confirmation that rotation is built on. */
+export async function wearTodayOutfit(formData?: FormData) {
   const user = await getCurrentUser();
-  const outfit = await lookForDate(user.id, todayInZone(user.timezone));
-  if (!outfit) return;
-  await wearOutfit(user, outfit.id);
+  // Only today's look can be worn; tomorrow's is a preview.
+  const outfit = formData?.get("day") === "tomorrow" ? null : await currentLook(user.id, user.timezone, formData);
+  if (outfit) await wearOutfit(user, outfit.id);
   revalidateCloset();
 }
 
-export async function unwearTodayOutfit() {
+export async function unwearTodayOutfit(formData?: FormData) {
   const user = await getCurrentUser();
-  const outfit = await lookForDate(user.id, todayInZone(user.timezone));
-  if (!outfit || outfit.status !== "worn") return;
-  await unwearOutfit(user, outfit.id);
+  const outfit = await currentLook(user.id, user.timezone, formData);
+  if (outfit && outfit.status === "worn") await unwearOutfit(user, outfit.id);
   revalidateCloset();
+}
+
+/** Swap: one piece of today's look for another clean piece in that slot. */
+export async function swapTodayPiece(formData: FormData) {
+  const user = await getCurrentUser();
+  const itemId = String(formData.get("itemId") ?? "");
+  const outfit = itemId ? await currentLook(user.id, user.timezone, formData) : null;
+  if (outfit && outfit.status === "suggested") {
+    // Nothing else clean for that slot leaves the look as it is.
+    let note = "";
+    await swapOutfitPiece(user, outfit.id, itemId).catch((error) => {
+      note = error instanceof Error && /Nothing else clean/.test(error.message) ? `${error.message}.` : "Could not swap that just now.";
+    });
+    revalidatePath("/today");
+    if (note) redirect(`${backTo(formData)}note=${encodeURIComponent(note)}`);
+  }
+  revalidatePath("/today");
+}
+
+/**
+ * "I like this look": a nudge toward this kind of pairing and these pieces. It is not
+ * a request to see the same stack again; rotation still holds it back.
+ */
+export async function likeTodayOutfit(formData?: FormData) {
+  const user = await getCurrentUser();
+  const outfit = await currentLook(user.id, user.timezone, formData);
+  if (!outfit) {
+    revalidatePath("/today");
+    return;
+  }
+  const ids = JSON.parse(outfit.itemIds) as string[];
+  if (ids.length < 2) return;
+  await prisma.lookVote.upsert({
+    where: { userId_comboKey: { userId: user.id, comboKey: comboKeyFromIds(ids) } },
+    create: {
+      userId: user.id,
+      comboKey: comboKeyFromIds(ids),
+      itemIds: JSON.stringify(ids),
+      verdict: "like",
+      scenario: "today",
+    },
+    update: { verdict: "like", scenario: "today" },
+  });
+  revalidateCloset();
+  revalidatePath("/style");
+}
+
+export async function unlikeTodayOutfit(formData?: FormData) {
+  const user = await getCurrentUser();
+  const outfit = await currentLook(user.id, user.timezone, formData);
+  if (!outfit) {
+    revalidatePath("/today");
+    return;
+  }
+  const ids = JSON.parse(outfit.itemIds) as string[];
+  await prisma.lookVote.deleteMany({
+    where: { userId: user.id, comboKey: comboKeyFromIds(ids), verdict: "like" },
+  });
+  revalidateCloset();
+  revalidatePath("/style");
 }
 
 /** Wash or still good, for one piece of a look that was worn. */
@@ -168,7 +252,7 @@ export async function sendEventToPhone() {
 
 export async function refreshMyStyle() {
   const user = await getCurrentUser();
-  await refreshStyle(user.id);
+  await refreshStyle(user.id).catch(() => undefined);
   revalidatePath("/style");
 }
 
@@ -187,6 +271,7 @@ export async function saveSettings(formData: FormData) {
       longitude: geo.longitude,
       locationLabel: geo.label,
       locationUpdatedAt: new Date(),
+      ...(geo.timezone ? { timezone: geo.timezone } : {}),
     };
   }
 
@@ -194,8 +279,8 @@ export async function saveSettings(formData: FormData) {
     where: { id: user.id },
     data: {
       timezone,
-      sendHour: Number.isFinite(sendHour) ? sendHour : 7,
-      washDays: Number.isFinite(washDays) ? washDays : 2,
+      sendHour: formData.get("sendHour") && Number.isFinite(sendHour) ? Math.min(23, Math.max(0, Math.round(sendHour))) : user.sendHour,
+      washDays: Number.isFinite(washDays) ? Math.min(14, Math.max(1, Math.round(washDays))) : 2,
       ...location,
     },
   });
@@ -241,7 +326,7 @@ export async function saveLocationFromCoords(input: {
       longitude: geo.longitude,
       locationLabel: geo.label,
       locationUpdatedAt: new Date(),
-      timezone: input.timezone || user.timezone,
+      timezone: input.timezone && validZone(input.timezone) ? input.timezone : user.timezone,
     },
   });
   revalidateUser(user.id);
@@ -261,6 +346,7 @@ export async function saveLocationFromCity(city: string) {
       longitude: geo.longitude,
       locationLabel: geo.label,
       locationUpdatedAt: new Date(),
+      ...(geo.timezone ? { timezone: geo.timezone } : {}),
     },
   });
   revalidateUser(user.id);
@@ -285,14 +371,34 @@ export async function voteLook(itemIds: string[], verdict: "like" | "pass", scen
     },
     update: { verdict, scenario: scenario || "everyday" },
   });
-  revalidatePath("/looks");
-  revalidatePath("/today");
-  revalidatePath("/event");
+  // The deck manages its own stack and Today is rendered fresh on every visit: nothing to
+  // revalidate, and doing so would re-render the deck and put a voted card back on top.
 }
 
-export async function getShopIdeas() {
+export async function refreshShopIdeas() {
   const user = await getCurrentUser();
-  return suggestPurchases(user.id);
+  let note = "";
+  const before = await prisma.suggestion.count({ where: { userId: user.id } });
+  await suggestPurchases(user.id).catch(() => {
+    note = "Could not look for new pieces just now. Try again in a minute.";
+  });
+  if (!note && before === (await prisma.suggestion.count({ where: { userId: user.id } })) && before === 0) {
+    note = "Nothing to add right now: the closet covers every gap, or you have waved those ideas off.";
+  }
+  revalidatePath("/shop");
+  revalidatePath("/");
+  revalidatePath("/today");
+  if (note) redirect(`/shop?note=${encodeURIComponent(note)}`);
+}
+
+export async function dismissShopIdea(formData: FormData) {
+  const user = await getCurrentUser();
+  const id = String(formData.get("id") ?? "");
+  if (!id) return;
+  await dismissIdea(user.id, id);
+  revalidatePath("/shop");
+  revalidatePath("/");
+  revalidatePath("/today");
 }
 
 export async function signOut() {

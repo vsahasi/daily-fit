@@ -1,9 +1,11 @@
 import { ClosetGrid } from "@/components/closet-grid";
 import { Shell } from "@/components/shell";
+import { ShopIdeas } from "@/components/shop-ideas";
 import { UploadDrop } from "@/components/upload-drop";
 import { daysBetween, todayInZone } from "@/lib/dates";
 import { prisma } from "@/lib/db";
 import { wornAgo } from "@/lib/names";
+import { currentIdeas } from "@/lib/shop";
 import { getCurrentUser } from "@/lib/user";
 
 export const dynamic = "force-dynamic";
@@ -16,6 +18,7 @@ export default async function ClosetPage() {
   });
   const needsKey = !process.env.OPENAI_API_KEY;
   const today = todayInZone(user.timezone);
+  const ideas = await currentIdeas(user.id);
 
   if (items.length === 0) {
     return (
@@ -61,6 +64,9 @@ export default async function ClosetPage() {
             : null,
         }))}
       />
+      <div className="mt-16 max-w-2xl">
+        <ShopIdeas ideas={ideas} />
+      </div>
     </Shell>
   );
 }

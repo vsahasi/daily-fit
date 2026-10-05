@@ -40,6 +40,12 @@ export function hourInZone(timeZone: string, date = new Date()) {
   return parsed === 24 ? 0 : parsed;
 }
 
+/** 0 is Sunday, 6 is Saturday, in the given zone. */
+export function weekdayInZone(timeZone: string, date = new Date()) {
+  const name = new Intl.DateTimeFormat("en-US", { timeZone, weekday: "short" }).format(date);
+  return ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(name);
+}
+
 export function addDays(date: Date, days: number) {
   return new Date(date.getTime() + days * 24 * 60 * 60 * 1000);
 }

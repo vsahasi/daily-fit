@@ -10,6 +10,7 @@ import { refreshStyle } from "../src/lib/style";
 const exec = promisify(execFile);
 
 const PHONE = process.env.INGEST_PHONE ?? "";
+if (!PHONE) throw new Error("Set INGEST_PHONE to the account's phone number, in E.164 form");
 const SOURCE = process.env.INGEST_DIR ?? path.join(os.homedir(), "Downloads");
 
 function isClothingFile(name: string) {

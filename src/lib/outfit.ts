@@ -1,10 +1,11 @@
 import type { User } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { todayInZone } from "@/lib/dates";
-import { comboKeyFromIds, pickLook } from "@/lib/pair";
+import { buildLikes } from "@/lib/likes";
+import { comboKeyFromIds, pickLook, swapPiece } from "@/lib/pair";
 import { prefsFromVotes } from "@/lib/prefs";
-import { buildTaste } from "@/lib/taste";
-import { everydayOccasion, type Occasion } from "@/lib/occasion";
+import { everydayOccasion, occasionFromWeatherJson, type Occasion } from "@/lib/occasion";
+import type { Weather } from "@/lib/types";
 import { lookForDate, wearHistory } from "@/lib/wear";
 import { fetchWeather } from "@/lib/weather";
 
@@ -20,8 +21,14 @@ export async function ensureLook(user: User, day: string) {
       where: { id: { in: ids }, userId: user.id, status: "available" },
     });
     if (clean < ids.length) {
+      // "replaced", not "skipped": a piece going to the wash is not a turn-down.
       await prisma.outfit.update({ where: { id: current.id }, data: { status: "replaced" } });
-      return generateOutfit(user, false, undefined, day);
+      try {
+        return await generateOutfit(user, false, undefined, day);
+      } catch (error) {
+        await prisma.outfit.update({ where: { id: current.id }, data: { status: "suggested" } });
+        throw error;
+      }
     }
   }
   return current ?? generateOutfit(user, false, undefined, day);
@@ -43,22 +50,11 @@ export async function generateOutfit(
   const date = isEvent ? `${day}:event` : day;
   const status = isEvent ? "event" : "suggested";
 
-  if (!isEvent) {
-    const existing = await lookForDate(user.id, day);
-    if (existing && (existing.status === "worn" || !force)) {
-      return existing;
-    }
-    if (existing) {
-      await prisma.outfit.update({
-        where: { id: existing.id },
-        data: { status: "skipped" },
-      });
-    }
-  } else {
-    await prisma.outfit.updateMany({
-      where: { userId: user.id, date, status: "event" },
-      data: { status: "skipped" },
-    });
+  // Nothing is written until the new look exists: a failed forecast or an exhausted
+  // closet must never cost the user the look they already have.
+  const existing = isEvent ? null : await lookForDate(user.id, day);
+  if (existing && (existing.status === "worn" || !force)) {
+    return existing;
   }
 
   if (user.latitude == null || user.longitude == null || !user.locationLabel) {
@@ -73,44 +69,126 @@ export async function generateOutfit(
     date: day,
   });
 
-  const skippedThatDay = await prisma.outfit.findMany({
-    where: {
-      userId: user.id,
-      date: { in: [day, `${day}:event`] },
-      status: { in: isEvent ? ["skipped", "event", "suggested"] : ["skipped"] },
-    },
+  // An everyday "Another look" reads only everyday turn-downs; an event reads its own day's event looks.
+  const earlier = await prisma.outfit.findMany({
+    where: isEvent
+      ? { userId: user.id, date, status: { in: ["skipped", "event"] } }
+      : { userId: user.id, date: day, status: "skipped" },
   });
-  const skippedCombos = skippedThatDay.map((row) => comboKeyFromIds(JSON.parse(row.itemIds) as string[]));
+  const turnedDown = [...earlier.map((row) => JSON.parse(row.itemIds) as string[]), ...(existing ? [JSON.parse(existing.itemIds) as string[]] : [])];
+  const skippedCombos = turnedDown.map((ids) => comboKeyFromIds(ids));
+  const avoidItems = isEvent ? [] : turnedDown.flat();
 
-  const [available, votes, history] = await Promise.all([
-    prisma.item.findMany({
-      where: { userId: user.id, status: "available", NOT: { imagePath: "" } },
-    }),
+  const [items, votes, history] = await Promise.all([
+    prisma.item.findMany({ where: { userId: user.id, NOT: { imagePath: "" } } }),
     prisma.lookVote.findMany({ where: { userId: user.id } }),
     wearHistory(user.id, day),
   ]);
   const pref = prefsFromVotes(votes);
-  const taste = buildTaste(available, votes, history.signals);
+  // Likes are read against the whole closet, so a liked look still counts while a piece of it is in the wash.
+  const likes = buildLikes(items, pref.liked, history.turnedDown.map((row) => row.itemIds), history.swappedOut);
+  const shared = { items, weather, occasion: event, dateKey: `${date}:${event.label}`, pref, likes, recency: history.recency };
 
-  const pick = pickLook({
-    items: available,
+  let pick;
+  try {
+    pick = pickLook({ ...shared, skippedCombos, avoidItems });
+  } catch (error) {
+    // Every stack has been turned down today. Start the round again rather than leave no look.
+    if (!turnedDown.length) throw error;
+    // Only the look on screen stays out, so the round never hands it straight back.
+    const live = existing ?? earlier.find((row) => row.status === "event");
+    pick = pickLook({ ...shared, skippedCombos: live ? [comboKeyFromIds(JSON.parse(live.itemIds) as string[])] : [], avoidItems: [] });
+  }
+
+  // Two requests can reach this point together (a reload, the cron and a page open, a double tap).
+  // A lock per user and day lets one through at a time; the second sees what the first wrote.
+  return prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${user.id}:${date}`}))`;
+    if (!isEvent) {
+      const rows = await tx.outfit.findMany({
+        where: { userId: user.id, date: day, status: { in: ["worn", "suggested"] } },
+        orderBy: { createdAt: "desc" },
+      });
+      const now = rows.find((row) => row.status === "worn") ?? rows[0] ?? null;
+      // Someone else already made today's look, or already replaced the one this request was turning down.
+      if (now && now.id !== existing?.id) return now;
+      if (existing) await tx.outfit.update({ where: { id: existing.id }, data: { status: "skipped" } });
+    } else {
+      await tx.outfit.updateMany({ where: { userId: user.id, date, status: "event" }, data: { status: "skipped" } });
+    }
+    return tx.outfit.create({
+      data: {
+        userId: user.id,
+        date,
+        itemIds: JSON.stringify(pick.itemIds),
+        weatherJson: JSON.stringify({ ...weather, scenario: event.label, occasion: event }),
+        reason: pick.reason,
+        status,
+      },
+    });
+  });
+}
+
+/**
+ * Trades one piece of today's look for another clean piece in that slot. The old look is
+ * kept as "swapped": it was seen, so it will not come straight back, but it was not turned
+ * down as a whole, so its other pieces stay in play.
+ */
+export async function swapOutfitPiece(user: User, outfitId: string, itemId: string) {
+  const outfit = await prisma.outfit.findFirst({
+    where: { id: outfitId, userId: user.id, status: { in: ["suggested", "event"] } },
+  });
+  if (!outfit) throw new Error("That look is gone. Make a new one.");
+  const current = JSON.parse(outfit.itemIds) as string[];
+  const weather = JSON.parse(outfit.weatherJson) as Weather;
+  const occasion = occasionFromWeatherJson(outfit.weatherJson) ?? everydayOccasion();
+  const day = outfit.date.slice(0, 10);
+
+  const [items, votes, history, earlier] = await Promise.all([
+    prisma.item.findMany({ where: { userId: user.id, NOT: { imagePath: "" } } }),
+    prisma.lookVote.findMany({ where: { userId: user.id } }),
+    wearHistory(user.id, day),
+    prisma.outfit.findMany({
+      where: { userId: user.id, date: outfit.date, status: { in: ["swapped", "skipped"] } },
+      select: { itemIds: true },
+    }),
+  ]);
+  const leaving = items.find((item) => item.id === itemId);
+  if (!leaving) throw new Error("That piece is not in this look");
+  // Every piece already tried in this slot today is out, so each swap is a new answer.
+  const sameSlot = (item: { category: string } | undefined) =>
+    item != null && (item.category === leaving.category || (leaving.category !== "bottom" && leaving.category !== "shoes" && (item.category === "outer" || item.category === "top")));
+  const avoidItems = earlier
+    .flatMap((row) => JSON.parse(row.itemIds) as string[])
+    .filter((id) => sameSlot(items.find((item) => item.id === id)));
+  const pref = prefsFromVotes(votes);
+  const likes = buildLikes(items, pref.liked, history.turnedDown.map((row) => row.itemIds), history.swappedOut);
+
+  const pick = swapPiece({
+    items,
     weather,
-    skippedCombos,
-    occasion: event,
-    dateKey: `${date}:${event.label}`,
+    occasion,
+    dateKey: `${outfit.date}:${occasion.label}`,
+    current,
+    itemId,
+    avoidItems,
     pref,
-    taste,
+    likes,
     recency: history.recency,
   });
 
-  return prisma.outfit.create({
-    data: {
-      userId: user.id,
-      date,
-      itemIds: JSON.stringify(pick.itemIds),
-      weatherJson: JSON.stringify({ ...weather, scenario: event.label, occasion: event }),
-      reason: pick.reason,
-      status,
-    },
-  });
+  const [, created] = await prisma.$transaction([
+    prisma.outfit.update({ where: { id: outfit.id }, data: { status: "swapped" } }),
+    prisma.outfit.create({
+      data: {
+        userId: user.id,
+        date: outfit.date,
+        itemIds: JSON.stringify(pick.itemIds),
+        weatherJson: outfit.weatherJson,
+        reason: pick.reason,
+        status: outfit.status,
+      },
+    }),
+  ]);
+  return created;
 }

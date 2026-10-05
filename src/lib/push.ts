@@ -1,5 +1,6 @@
 import webpush from "web-push";
 import type { User } from "@prisma/client";
+import { prisma } from "@/lib/db";
 
 function configured() {
   return Boolean(
@@ -45,11 +46,17 @@ export async function sendLookPush(
         body: opts.body,
         url: opts.url ?? "/today",
       }),
+      // A look that arrives a day late is worse than none.
+      { TTL: 12 * 60 * 60 },
     );
     return { sent: true, reason: null as string | null };
   } catch (error) {
     const status = Number((error as { statusCode?: number }).statusCode);
     if (status === 404 || status === 410) {
+      // The phone dropped the subscription. Forget it, so the app stops saying notifications are on.
+      await prisma.user
+        .update({ where: { id: user.id }, data: { pushEndpoint: null, pushP256dh: null, pushAuth: null } })
+        .catch(() => undefined);
       return { sent: false, reason: "Turn on notifications on this phone again" };
     }
     return {

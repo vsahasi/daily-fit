@@ -1,6 +1,6 @@
 import type { Item, User } from "@prisma/client";
 import { prisma } from "@/lib/db";
-import { shiftDate } from "@/lib/dates";
+import { daysBetween, shiftDate } from "@/lib/dates";
 import { markClean, putInWash } from "@/lib/laundry";
 import {
   buildRecency,
@@ -8,11 +8,13 @@ import {
   undecidedPieces,
   type Decision,
   type Recency,
+  type WornLook,
 } from "@/lib/rotation";
-import type { WearSignal } from "@/lib/taste";
 
 /** How far back an undecided worn piece keeps asking for a wash-or-keep call. */
 const LEFTOVER_DAYS = 3;
+/** How long a turned-down look or a swapped-out piece keeps nudging the pick away. */
+const NUDGE_DAYS = 30;
 
 /** The look for a calendar day: the one confirmed as worn if there is one, else the live suggestion. */
 export async function lookForDate(userId: string, date: string) {
@@ -25,7 +27,7 @@ export async function lookForDate(userId: string, date: string) {
 
 /**
  * "I wore this" is the real event. It stamps every piece as worn, which is what
- * rotation and taste read from. A suggestion alone changes nothing.
+ * rotation reads from. A suggestion alone changes nothing.
  */
 export async function wearOutfit(user: User, outfitId: string) {
   const outfit = await prisma.outfit.findFirst({
@@ -43,12 +45,16 @@ export async function wearOutfit(user: User, outfitId: string) {
   return updated;
 }
 
-/** Undo for a mis-tap, so a look that never left the hanger cannot skew rotation or taste. */
+/** Undo for a mis-tap, so a look that never left the hanger cannot skew rotation. */
 export async function unwearOutfit(user: User, outfitId: string) {
   const outfit = await prisma.outfit.findFirst({
     where: { id: outfitId, userId: user.id, status: "worn" },
   });
   if (!outfit) return;
+  // A piece sent to the wash from a look that was never worn goes back in the closet.
+  for (const [itemId, choice] of Object.entries(parseDecisions(outfit.decisionsJson))) {
+    if (choice === "wash") await markClean(user.id, itemId);
+  }
   await prisma.outfit.update({
     where: { id: outfit.id },
     data: { status: "suggested", wornAt: null, decisionsJson: "{}" },
@@ -89,31 +95,65 @@ export async function decidePiece(user: User, outfitId: string, itemId: string, 
   else await markClean(user.id, itemId);
 }
 
-/** Everything Today learns from what was actually put on, or turned down, measured back from `forDate`. */
+/**
+ * Everything Today remembers, measured back from `forDate`: what was put on, what was
+ * turned down, and what was shown on an earlier day and never answered.
+ */
 export async function wearHistory(userId: string, forDate: string): Promise<{
   recency: Recency;
-  signals: WearSignal[];
+  worn: WornLook[];
+  /** Turned down in the last month, newest first. */
+  turnedDown: WornLook[];
+  /** Pieces swapped out of a look in the last month. */
+  swappedOut: string[];
 }> {
-  const rows = await prisma.outfit.findMany({
-    where: { userId, status: { in: ["worn", "skipped"] } },
-    orderBy: { createdAt: "desc" },
-    select: { date: true, itemIds: true, status: true },
-    take: 500,
-  });
+  const [rows, items] = await Promise.all([
+    prisma.outfit.findMany({
+      where: { userId, status: { in: ["worn", "skipped", "suggested", "swapped", "replaced"] } },
+      orderBy: { createdAt: "desc" },
+      select: { date: true, itemIds: true, status: true, createdAt: true },
+      take: 500,
+    }),
+    prisma.item.findMany({ where: { userId } }),
+  ]);
   const parsed = rows.map((row) => ({
     date: row.date,
     status: row.status,
     itemIds: JSON.parse(row.itemIds) as string[],
+    createdAt: row.createdAt,
   }));
+  const recent = (row: { date: string }) => {
+    const ago = daysBetween(row.date, forDate);
+    return ago >= 0 && ago <= NUDGE_DAYS;
+  };
   const worn = parsed.filter((row) => row.status === "worn");
   // A pass on an event look says little about the everyday stack, so only plain days count.
-  const skipped = parsed.filter((row) => row.status === "skipped" && !row.date.includes(":"));
+  const turnedDown = parsed.filter((row) => row.status === "skipped" && !row.date.includes(":"));
+  // A suggestion from an earlier day that was never confirmed or turned down was still seen,
+  // and so was a look that had one piece swapped out.
+  const shown = parsed.filter(
+    (row) =>
+      !row.date.includes(":") &&
+      ((row.status === "suggested" && row.date < forDate) || row.status === "swapped"),
+  );
+  // The piece that left in a swap is the one in the old look that is missing from the next look of that day.
+  const swappedOut: string[] = [];
+  const swaps = parsed.filter((row) => row.status === "swapped");
+  for (const old of swaps) {
+    if (!recent(old)) continue;
+    const next = parsed
+      .filter((row) => row.date === old.date && row.createdAt > old.createdAt)
+      .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())[0];
+    if (!next || next.itemIds.length !== old.itemIds.length) continue;
+    // A swap trades exactly one piece. Anything else is a different look, not a swap.
+    const gone = old.itemIds.filter((id) => !next.itemIds.includes(id));
+    if (gone.length === 1) swappedOut.push(gone[0]);
+  }
   return {
-    recency: buildRecency(worn, forDate),
-    signals: [
-      ...worn.map((row) => ({ itemIds: row.itemIds, verdict: "worn" as const })),
-      ...skipped.map((row) => ({ itemIds: row.itemIds, verdict: "skipped" as const })),
-    ],
+    recency: buildRecency(worn, forDate, { shown, turnedDown, items }),
+    worn,
+    turnedDown: turnedDown.filter(recent),
+    swappedOut,
   };
 }
 
@@ -142,8 +182,14 @@ export async function findLeftovers(user: User, forDate: string): Promise<Leftov
   );
   if (!pending.length) return [];
 
+  // Shoes are worn but never laundered, so nobody is asked to make a call on them.
   const items = await prisma.item.findMany({
-    where: { id: { in: pending.map((row) => row.itemId) }, userId: user.id, status: "available" },
+    where: {
+      id: { in: pending.map((row) => row.itemId) },
+      userId: user.id,
+      status: "available",
+      NOT: { category: "shoes" },
+    },
   });
   const byId = new Map(items.map((item) => [item.id, item]));
   return pending

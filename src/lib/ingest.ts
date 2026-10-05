@@ -36,7 +36,13 @@ export async function ingestPhoto(opts: {
   try {
     const jpeg = await bytesToJpeg(opts.bytes, opts.mime);
     const catalog = applyHints(await catalogPhotoBytes(jpeg), opts.hints);
-    const polished = await polishGarment(jpeg, catalog.bbox, catalog.rotation, opts.hints?.extra);
+    const polished = await polishGarment(
+      jpeg,
+      catalog.bbox,
+      catalog.rotation,
+      opts.hints?.extra,
+      catalog.category,
+    );
 
     await uploadBytes(key, polished);
     const saved = await prisma.item.update({

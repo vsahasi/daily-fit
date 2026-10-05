@@ -13,6 +13,13 @@ If the source photo is sideways or upside down, correct it. Never leave a collar
 Seamless warm taupe studio sweep. Soft even catalog light. No bed, no floor, no hanger hardware, no people, no other clothes, no props, no shadows of a room.
 Keep the true garment: colors, logos, text, cut, sleeve length, and fabric. Do not turn short sleeves into long sleeves or a knit into a dress. Do not invent a different piece.`;
 
+const SHOE_PROMPT = `E-commerce product photograph of this exact pair of shoes, as if it is a listing on a footwear site (SSENSE, Mr Porter, END.).
+Both shoes of the pair, standing on their soles side by side, seen from a front three-quarter angle so the outer side profile and the toe are both visible.
+The whole pair sits centered with generous margin inside a vertical frame. Nothing is cropped.
+Clean and new-looking: no dirt, no scuffs, laces tied neatly. Open sandals stay open, with no laces added.
+Seamless warm taupe studio sweep. Soft even catalog light, a faint contact shadow under the soles. No floor tiles, no feet, no legs, no other shoes, no props, no shadows of a room.
+Keep the true shoe: colors, materials, logos, stripes, stitching, sole shape, and lacing. Do not invent a different shoe.`;
+
 function cropRegion(width: number, height: number, bbox: [number, number, number, number]) {
   const clamped = bbox.map((n) => Math.min(1, Math.max(0, n))) as [number, number, number, number];
   const [x, y] = clamped;
@@ -32,7 +39,7 @@ function cropRegion(width: number, height: number, bbox: [number, number, number
   };
 }
 
-async function studioPolish(bytes: Buffer, rotation = 0, extra = "") {
+async function studioPolish(bytes: Buffer, rotation = 0, extra = "", category = "") {
   const key = process.env.OPENAI_API_KEY;
   if (!key) throw new Error("missing openai");
   let pipeline = sharp(bytes).rotate();
@@ -42,7 +49,8 @@ async function studioPolish(bytes: Buffer, rotation = 0, extra = "") {
     .jpeg({ quality: 90 })
     .toBuffer();
   const openai = new OpenAI({ apiKey: key });
-  const prompt = extra ? `${STUDIO_PROMPT}\n${extra}` : STUDIO_PROMPT;
+  const studio = category === "shoes" ? SHOE_PROMPT : STUDIO_PROMPT;
+  const prompt = extra ? `${studio}\n${extra}` : studio;
   const result = await openai.images.edit({
     model: imageModel(),
     image: await toFile(jpeg, "garment.jpg", { type: "image/jpeg" }),
@@ -112,9 +120,10 @@ export async function polishGarment(
   bbox: [number, number, number, number] = [0.08, 0.08, 0.84, 0.84],
   rotation = 0,
   extra = "",
+  category = "",
 ) {
   try {
-    return await studioPolish(bytes, rotation, extra);
+    return await studioPolish(bytes, rotation, extra, category);
   } catch {
     return cropPolish(bytes, bbox, rotation);
   }

@@ -10,8 +10,17 @@ Male figure, 5 feet 8 inches tall, lightly muscled athletic build, natural stand
 Headless ghost mannequin or a matte display figure with no face, no hair, no skin texture that looks like a real person.
 The clothes must match the reference photos: colors, logos, text, cut, sleeve length, and fabric.
 Garments are filled out, smooth, wrinkle-free, as on an e-commerce product page (SSENSE, Mr Porter).
-Seamless warm taupe studio sweep. Soft even catalog light. No bed, no props, no other people, no hanger hardware.
-Full figure in frame, collar at the top, shoes optional and plain. Do not invent extra garments.`;
+Seamless warm taupe studio sweep. Soft even catalog light. No bed, no props, no other people, no hanger hardware.`;
+
+/** The whole brief for one look. A look with a pair in it is shown head to toe in that pair. */
+export function formPrompt(pieces: { name: string; category: string }[]) {
+  const shoes = pieces.find((piece) => piece.category === "shoes");
+  const framing = shoes
+    ? `Full figure in frame from collar to soles, both feet fully visible and standing on the floor. The figure wears on its feet the exact pair from the shoe reference photo (${shoes.name}): same colors, materials, logos, stripes, sole shape, and lacing. Open sandals stay open, with bare mannequin feet. Do not swap in generic shoes. Do not invent extra garments.`
+    : "Full figure in frame, collar at the top, shoes optional and plain. Do not invent extra garments.";
+  const names = pieces.map((piece) => piece.name).join(", ");
+  return `${PROMPT}\n${framing}\nGarments in this look: ${names}.`;
+}
 
 async function garmentJpeg(bytes: Buffer) {
   return sharp(bytes)
@@ -53,11 +62,10 @@ export async function renderMannequin(userId: string, itemIds: string[]) {
     }),
   );
 
-  const names = ordered.map((item) => item.name).join(", ");
   const result = await openai.images.edit({
     model: imageModel(),
     image: files,
-    prompt: `${PROMPT}\nGarments in this look: ${names}.`,
+    prompt: formPrompt(ordered),
     size: "1024x1536",
     quality: "medium",
     output_format: "jpeg",

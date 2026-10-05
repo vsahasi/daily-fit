@@ -4,6 +4,7 @@ import { clothFacts, clothName } from "@/lib/names";
 type ItemCardProps = {
   id: string;
   name: string;
+  category: string;
   material: string | null;
   warmth: number;
   status: string;
@@ -11,9 +12,9 @@ type ItemCardProps = {
   worn: string | null;
 };
 
-export function ItemCard({ id, name, material, warmth, status, worn }: ItemCardProps) {
+export function ItemCard({ id, name, category, material, warmth, status, worn }: ItemCardProps) {
   const inWash = status === "wash";
-  const facts = [clothFacts({ warmth, inWash }), worn].filter(Boolean).join(". ");
+  const facts = [clothFacts({ warmth, inWash, category }), worn].filter(Boolean).join(". ");
   return (
     <article>
       <div className="bg-snow">
@@ -36,7 +37,7 @@ export function ItemCard({ id, name, material, warmth, status, worn }: ItemCardP
                 Mark clean
               </button>
             </form>
-          ) : (
+          ) : category === "shoes" ? null : (
             <form action={putItemInWash} className="flex items-center gap-2">
               <input type="hidden" name="itemId" value={id} />
               <button type="submit" className="hover:text-ink">

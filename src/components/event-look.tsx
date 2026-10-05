@@ -6,6 +6,7 @@ import { dressForEvent, sendEventToPhone, skipEventOutfit } from "@/app/actions"
 import { PhoneNotify } from "@/components/phone-notify";
 import { TextLookButton } from "@/components/text-look-button";
 import { clothFacts, clothName } from "@/lib/names";
+import { LookPhotos } from "@/components/look-photos";
 
 type Piece = {
   id: string;
@@ -51,7 +52,6 @@ export function EventLook({
 }) {
   const [query, setQuery] = useState(scenario);
   const hero = pickHero(pieces);
-  const companion = hero ? pieces.find((piece) => piece.id !== hero.id) ?? null : null;
 
   return (
     <div>
@@ -74,26 +74,7 @@ export function EventLook({
 
       {hero ? (
         <article>
-          <div className="grid gap-2 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
-            <figure className="bg-snow">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={`/api/media/item/${hero.id}?v=4`}
-                alt={hero.name}
-                className="aspect-[3/4] w-full object-cover"
-              />
-            </figure>
-            {companion ? (
-              <figure className="bg-snow">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={`/api/media/item/${companion.id}?v=4`}
-                  alt={companion.name}
-                  className="aspect-[3/4] w-full object-cover"
-                />
-              </figure>
-            ) : null}
-          </div>
+          <LookPhotos pieces={pieces} />
           <p className="mt-8 max-w-[38em] text-[17px] leading-relaxed">{reason}</p>
           <ul className="mt-8 divide-y divide-line border-y border-line">
             {pieces.map((piece) => (
@@ -106,7 +87,9 @@ export function EventLook({
                 />
                 <div>
                   <p className="text-[13px]">{clothName(piece.name, piece.material)}</p>
-                  <p className="text-[12px] text-mute">{clothFacts({ warmth: piece.warmth })}</p>
+                  <p className="text-[12px] text-mute">
+                    {clothFacts({ warmth: piece.warmth, category: piece.category })}
+                  </p>
                 </div>
               </li>
             ))}

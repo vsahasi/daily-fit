@@ -3,10 +3,13 @@
 import { useState, type ReactNode } from "react";
 import { useFormStatus } from "react-dom";
 import {
+  likeTodayOutfit,
   makeTodayOutfit,
   putItemInWash,
   sendTodayToPhone,
   skipTodayOutfit,
+  swapTodayPiece,
+  unlikeTodayOutfit,
   unwearTodayOutfit,
   wearTodayOutfit,
 } from "@/app/actions";
@@ -14,6 +17,7 @@ import { PhoneNotify } from "@/components/phone-notify";
 import { PieceCall } from "@/components/piece-call";
 import { TextLookButton } from "@/components/text-look-button";
 import { clothFacts, clothName } from "@/lib/names";
+import { LookPhotos } from "@/components/look-photos";
 
 type Piece = {
   id: string;
@@ -22,6 +26,8 @@ type Piece = {
   material: string | null;
   warmth: number;
   decision: "wash" | "keep" | null;
+  /** Another clean piece exists for this slot. */
+  canSwap?: boolean;
 };
 
 function Submit({
@@ -49,11 +55,13 @@ export function LookSpread({
   reason,
   outfitId,
   worn,
-  hero,
-  companion,
+  liked,
   pieces,
   formSrc: cachedFormSrc,
+  preview = false,
 }: {
+  /** Tomorrow's look, seen the evening before: it can be changed, not yet worn. */
+  preview?: boolean;
   weekday: string;
   dek: string;
   place: ReactNode;
@@ -62,8 +70,8 @@ export function LookSpread({
   reason: string;
   outfitId: string;
   worn: boolean;
-  hero: Piece;
-  companion: Piece | null;
+  /** The user has said they like this stack. A nudge for later, not a request for a repeat. */
+  liked: boolean;
   pieces: Piece[];
   /** Set when this exact stack already has a rendered form in storage. */
   formSrc: string | null;
@@ -97,12 +105,28 @@ export function LookSpread({
     }
   }
 
+  // Every form says which look it was shown and which day it belongs to.
+  const lookFields = (
+    <>
+      <input type="hidden" name="outfitId" value={outfitId} />
+      {preview ? <input type="hidden" name="day" value="tomorrow" /> : null}
+    </>
+  );
+
   return (
     <article>
       <header className="mb-8 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 className="text-[32px] leading-tight text-moss">{weekday}</h1>
           {worn ? <p className="mt-1 text-[14px] text-moss">Wearing this today.</p> : null}
+          {preview ? (
+            <p className="mt-1 text-[14px] text-mute">
+              Tomorrow&rsquo;s look.{" "}
+              <a href="/today" className="text-ink underline-offset-4 hover:underline">
+                See today
+              </a>
+            </p>
+          ) : null}
         </div>
         <div className="max-w-[34ch] text-[14px] leading-[22px]">
           <p>{dek}</p>
@@ -118,26 +142,7 @@ export function LookSpread({
           <img src={formSrc} alt="This look on a form" className="mx-auto max-h-[80vh] w-full object-contain" />
         </figure>
       ) : (
-        <div className="grid gap-2 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
-          <figure className="bg-snow">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={`/api/media/item/${hero.id}?v=4`}
-              alt={hero.name}
-              className="aspect-[3/4] w-full object-cover"
-            />
-          </figure>
-          {companion ? (
-            <figure className="bg-snow">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={`/api/media/item/${companion.id}?v=4`}
-                alt={companion.name}
-                className="aspect-[3/4] w-full object-cover"
-              />
-            </figure>
-          ) : null}
-        </div>
+        <LookPhotos pieces={pieces} />
       )}
 
       <p className="mt-8 max-w-[38em] text-[17px] leading-relaxed">{reason}</p>
@@ -154,16 +159,33 @@ export function LookSpread({
             />
             <div>
               <p className="text-[13px]">{clothName(piece.name, piece.material)}</p>
-              <p className="text-[12px] text-mute">{clothFacts({ warmth: piece.warmth })}</p>
+              <p className="text-[12px] text-mute">
+                {clothFacts({ warmth: piece.warmth, category: piece.category })}
+              </p>
               {worn ? (
-                <PieceCall outfitId={outfitId} itemId={piece.id} decision={piece.decision} />
+                piece.category === "shoes" ? null : (
+                  <PieceCall outfitId={outfitId} itemId={piece.id} decision={piece.decision} />
+                )
               ) : (
-                <form action={putItemInWash} className="mt-1">
-                  <input type="hidden" name="itemId" value={piece.id} />
-                  <Submit className="call" pendingLabel="Finding another look">
-                    Already dirty
-                  </Submit>
-                </form>
+                <div className="mt-1 flex gap-5">
+                  {piece.canSwap === false ? null : (
+                    <form action={swapTodayPiece}>
+              {lookFields}
+                      <input type="hidden" name="itemId" value={piece.id} />
+                      <Submit className="call" pendingLabel="Swapping">
+                        Swap
+                      </Submit>
+                    </form>
+                  )}
+                  {piece.category === "shoes" ? null : (
+                    <form action={putItemInWash}>
+                      <input type="hidden" name="itemId" value={piece.id} />
+                      <Submit className="call" pendingLabel="Finding another look">
+                        Already dirty
+                      </Submit>
+                    </form>
+                  )}
+                </div>
               )}
             </div>
           </li>
@@ -173,23 +195,29 @@ export function LookSpread({
       <div className="mt-10 flex flex-wrap items-center gap-x-4 gap-y-3">
         {worn ? (
           <form action={unwearTodayOutfit}>
+              {lookFields}
             <Submit className="btn btn-ghost" pendingLabel="Undoing">
               Didn&rsquo;t wear it
             </Submit>
           </form>
         ) : (
           <>
-            <form action={wearTodayOutfit}>
-              <Submit className="btn" pendingLabel="Noting it">
-                Wearing this
-              </Submit>
-            </form>
+            {preview ? null : (
+              <form action={wearTodayOutfit}>
+                {lookFields}
+                <Submit className="btn" pendingLabel="Noting it">
+                  Wearing this
+                </Submit>
+              </form>
+            )}
             <form action={skipTodayOutfit}>
+              {lookFields}
               <Submit className="btn btn-ghost" pendingLabel="Looking">
                 Not this
               </Submit>
             </form>
             <form action={makeTodayOutfit}>
+              {lookFields}
               <Submit className="btn btn-text" pendingLabel="Looking">
                 Another look
               </Submit>
@@ -207,10 +235,33 @@ export function LookSpread({
       </div>
       {formError ? <p className="mt-3 text-[13px] text-warn">{formError}</p> : null}
 
-      <div className="mt-8">
-        <TextLookButton action={sendTodayToPhone} />
-        <PhoneNotify />
+      <div className="mt-6 flex flex-wrap items-center gap-x-4 gap-y-2 text-[13px]">
+        {liked ? (
+          <>
+            <p className="text-moss">You like this look. More like it, later, in a new mix.</p>
+            <form action={unlikeTodayOutfit}>
+              {lookFields}
+              <Submit className="btn btn-text" pendingLabel="Undoing">
+                Undo
+              </Submit>
+            </form>
+          </>
+        ) : (
+          <form action={likeTodayOutfit}>
+              {lookFields}
+            <Submit className="btn btn-ghost" pendingLabel="Noting it">
+              I like this look
+            </Submit>
+          </form>
+        )}
       </div>
+
+      {preview ? null : (
+        <div className="mt-8">
+          <TextLookButton action={sendTodayToPhone} />
+          <PhoneNotify />
+        </div>
+      )}
     </article>
   );
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useSyncExternalStore } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { savePushSubscription } from "@/app/actions";
 
 function urlBase64ToUint8Array(base64: string) {
@@ -53,6 +53,29 @@ export function PhoneNotify() {
   const [changed, setStatus] = useState<Status | null>(null);
   const status = changed ?? detected;
   const [message, setMessage] = useState("");
+
+  // Permission can outlive the subscription: iOS drops it, or the server clears a dead one.
+  // When the browser still holds one, hand it back to the server; when it does not, offer the button again.
+  useEffect(() => {
+    if (detected !== "on") return;
+    let live = true;
+    navigator.serviceWorker
+      .getRegistration()
+      .then((registration) => registration?.pushManager.getSubscription())
+      .then(async (subscription) => {
+        if (!live) return;
+        const json = subscription?.toJSON();
+        if (json?.endpoint && json.keys?.p256dh && json.keys?.auth) {
+          await savePushSubscription({ endpoint: json.endpoint, p256dh: json.keys.p256dh, auth: json.keys.auth });
+        } else {
+          setStatus("off");
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, [detected]);
 
   async function enable() {
     const Notify = notificationApi();

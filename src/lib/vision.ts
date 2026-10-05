@@ -116,6 +116,7 @@ bbox: [x, y, w, h] as 0-1 fractions of the image covering ONLY the garment, tigh
 Be specific. Do not invent brands you cannot see.
 SHORTS VS PANTS: if the hem ends at or above the knee, subcategory is short, never chino or pant. Full-length to the ankle is a pant.
 SLEEVES: if the sleeve ends above the elbow, it is short-sleeve. Only say long-sleeve if the cuff reaches the wrist.
+SHOES: a pair of shoes is category shoes, layerRole shoe, one item for the pair. subcategory is one of runner, sneaker, flip-flop, sandal, slide, boot, loafer, dress shoe. The pair in the middle of the photo is the item; ignore other shoes and feet at the edges. warmth 1 for open sandals, 2 for mesh or knit sneakers, 3 or more for boots. rainOk is false for knit, suede, canvas, and open sandals. A running shoe is formality 1, a clean everyday sneaker 2-3, a loafer or dress shoe 4-5. rotation is 0.
 Read printed text (Real Madrid, Mexico, Harker, Nike, Dri-FIT) and put it in the name.
 Dri-FIT / performance polyester is not cotton knit.
 rotation: 0, 90, 180, or 270. Degrees clockwise so the garment is upright (collar or waistband at the top).`,
