@@ -1,0 +1,107 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                String    @id @default(cuid())
+  createdAt         DateTime  @default(now())
+  phone             String?   @unique
+  timezone          String    @default("America/Los_Angeles")
+  sendHour          Int       @default(7)
+  washDays          Int       @default(2)
+  latitude          Float?
+  longitude         Float?
+  locationLabel     String?
+  locationUpdatedAt DateTime?
+  shortcutSecret    String    @unique
+  styleSummary      String?
+  styleProfile      String?
+  styleUpdatedAt    DateTime?
+  items             Item[]
+  outfits           Outfit[]
+  lookVotes         LookVote[]
+  pushEndpoint      String?
+  pushP256dh        String?
+  pushAuth          String?
+}
+
+model Item {
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt   DateTime  @default(now())
+  imagePath   String
+  name        String
+  category    String
+  subcategory String?
+  colors      String
+  material    String?
+  pattern     String?
+  formality   Int       @default(3)
+  warmth      Int       @default(3)
+  rainOk        Boolean   @default(true)
+  notes         String?
+  fit           String?
+  silhouette    String?
+  layerRole     String?
+  colorFamilies String    @default("[]")
+  pairsWith     String    @default("[]")
+  avoidWith     String    @default("[]")
+  profile       String?
+  washDays      Int?
+  status        String    @default("available")
+  washUntil   DateTime?
+  lastWornAt  DateTime?
+  source      String    @default("web")
+}
+
+model Outfit {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  date        String
+  createdAt   DateTime @default(now())
+  itemIds     String
+  weatherJson String
+  reason      String
+  collagePath String?
+  // suggested | worn | skipped (turned down) | replaced (a piece went to the wash) | event
+  status      String   @default("suggested")
+  smsSid      String?
+  // Set when the look is confirmed as worn. That confirmation drives rotation and taste.
+  wornAt        DateTime?
+  // Per-piece call after wearing: { [itemId]: "wash" | "keep" }. A missing id is still undecided.
+  decisionsJson String    @default("{}")
+
+  @@index([userId, date])
+}
+
+model LookVote {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  comboKey  String
+  itemIds   String
+  verdict   String
+  scenario  String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, comboKey])
+  @@index([userId, scenario])
+}
+
+model LoginCode {
+  id        String   @id @default(cuid())
+  phone     String
+  code      String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([phone])
+}
