@@ -122,6 +122,25 @@ npm run dev
 
 Open http://localhost:3000/sign-in. The engine itself needs none of those services: `npm test` runs offline.
 
+## Build your own
+
+This is a personal app. The closet is mine and so are some of the rules (`src/lib/house.ts` knows I rarely wear polos). It is not a product, but everything here is open and you can have your own version in two ways.
+
+**Fork this one.** Follow "Run it locally", sign in, and photograph your clothes. Then open `src/lib/house.ts` and replace my standing rules with yours. The weather, layering, and colour rules are general and should work for any closet of casual menswear. Anything else will need its own kinds added in `src/lib/kinds.ts` and its own rows in the pairing matrix in `src/lib/classic.ts`.
+
+**Or build it from scratch.** This is the order I would do it in again:
+
+1. **Catalog first.** One vision call per photo, into fixed fields: kind, main colour, warmth, sleeve length, rain-safe. Read every row by hand afterwards. Most of my early bad picks came from a wrong label here (a "cotton jersey" tee read as a sports jersey), not from the scoring.
+2. **Write your hard rules as sentences before any code.** Mine started as "no long sleeve above 70°F". These are the picks that make you stop trusting the app, so they are checked as pass or fail and never traded off against a score.
+3. **Dress for the hours you are out, not the daily high.** Open-Meteo gives an hourly forecast for free with no key. The coldest felt hour decides whether you need a layer, and the afternoon high decides everything else.
+4. **Score pairings with plain rules.** A table of which kinds of top go with which kinds of bottom, a formality number per piece, and a few colour rules get further than you would expect. Do not call a model each morning: it is slower, it costs money every day, and you cannot test it.
+5. **Give it a memory early.** Without one, the best-scoring outfit wins every day. Record what was worn and what was shown and make both sit out for a while.
+6. **Grade the output, not the code.** Write a script that prints what the engine picks for twenty kinds of day, read all of it, and write down every pick you would not wear. That list is the backlog.
+
+Models work around the edges here: cataloging each photo once, cleaning up the photos, writing a style summary, and the weekly shopping idea. Picking the day's outfit makes no model call.
+
+Questions are welcome: open an issue.
+
 ## What I would do next
 
 - A graded benchmark in CI: fail a change that lowers the share of A and B looks on the corpus.
