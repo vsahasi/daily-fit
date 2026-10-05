@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { comboKey } from "@/lib/combo";
 import { buildRecency, parseDecisions, rotationScore, undecidedPieces } from "@/lib/rotation";
+import { testItem } from "@/lib/testing";
 
 const tee = { id: "tee", category: "top" };
 const otherTee = { id: "tee2", category: "top" };
@@ -60,11 +61,23 @@ test("a repeated top costs more than a repeated bottom", () => {
   assert.ok(repeatTop < repeatBottom);
 });
 
-test("the penalty fades after a few days and the exact stack is free again after a week", () => {
-  const worn = [{ date: "2026-09-10", itemIds: ["tee", "cargo"] }];
+test("the penalty fades after a few days and the exact stack is free again after two weeks", () => {
+  const worn = [{ date: "2026-09-01", itemIds: ["tee", "cargo"] }];
   assert.equal(rotationScore([tee, cargo], buildRecency(worn, "2026-09-17")).score, 0);
-  const midweek = rotationScore([tee, cargo], buildRecency(worn, "2026-09-14")).score;
-  assert.ok(midweek <= -45, "four days later the exact stack is still held back");
+  const nextWeek = rotationScore([tee, cargo], buildRecency(worn, "2026-09-10")).score;
+  assert.ok(nextWeek <= -45, "nine days later the exact stack is still held back");
+});
+
+test("a stack turned down stays away, and one merely shown is held back less", () => {
+  const recency = buildRecency([], "2026-09-17", {
+    shown: [{ date: "2026-09-15", itemIds: ["tee2", "cargo"] }],
+    turnedDown: [{ date: "2026-09-14", itemIds: ["tee", "cargo"] }],
+  });
+  const turnedDown = rotationScore([tee, cargo], recency).score;
+  const shown = rotationScore([otherTee, cargo], recency).score;
+  assert.ok(turnedDown <= -80, `turned down should be held back hard, got ${turnedDown}`);
+  assert.ok(shown < 0 && shown > turnedDown, `shown should sit between, got ${shown}`);
+  assert.ok(rotationScore([{ id: "tee3", category: "top" }, cargo], recency).score > shown, "a fresh top on those trousers is not held back");
 });
 
 test("wearing the same trousers all week stacks up against them", () => {
@@ -79,6 +92,30 @@ test("wearing the same trousers all week stacks up against them", () => {
   );
   const fresh = { id: "tee9", category: "top" };
   assert.ok(rotationScore([fresh, cargo], thrice).score < rotationScore([fresh, cargo], once).score);
+});
+
+test("a piece nobody has seen in two weeks comes forward", () => {
+  const recency = buildRecency([{ date: "2026-09-16", itemIds: ["tee", "cargo"] }], "2026-09-17");
+  const forgotten = rotationScore([{ id: "tee7", category: "top" }, { id: "chino", category: "bottom" }], recency).score;
+  assert.ok(forgotten > 0, `expected a bonus, got ${forgotten}`);
+  assert.equal(rotationScore([{ id: "tee7", category: "top" }, { id: "chino", category: "bottom" }], buildRecency([], "2026-09-17")).score, 0);
+});
+
+test("the same kind of top all week costs more with each day", () => {
+  const polo = (id: string) => testItem({ id, category: "top", name: `${id} polo` });
+  const chino = testItem({ id: "chino", category: "bottom", name: "Khaki chino" });
+  const tee = testItem({ id: "tee-x", category: "top", name: "White tee" });
+  const closet = [polo("p1"), polo("p2"), polo("p3"), chino, tee];
+  const worn = [
+    { date: "2026-09-16", itemIds: ["p1", "chino"] },
+    { date: "2026-09-15", itemIds: ["p2", "chino"] },
+    { date: "2026-09-14", itemIds: ["p3", "chino"] },
+  ];
+  const recency = buildRecency(worn, "2026-09-17", { items: closet });
+  const fresh = polo("p9");
+  const anotherPolo = rotationScore([fresh, chino], recency).score;
+  const aTee = rotationScore([tee, chino], recency).score;
+  assert.ok(anotherPolo < aTee, `a fourth polo (${anotherPolo}) should cost more than a tee (${aTee})`);
 });
 
 test("parseDecisions keeps only wash and keep, and survives bad JSON", () => {

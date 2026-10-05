@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { wornAgo } from "@/lib/names";
+import { clothFacts, wornAgo } from "@/lib/names";
 
 test("wornAgo reads like a person would say it, and goes quiet after a week", () => {
   assert.equal(wornAgo(0), "Worn today");
@@ -10,4 +10,10 @@ test("wornAgo reads like a person would say it, and goes quiet after a week", ()
   assert.equal(wornAgo(8), null);
   assert.equal(wornAgo(null), null);
   assert.equal(wornAgo(-1), null);
+});
+
+test("cloth weight is for clothes, not shoes", () => {
+  assert.equal(clothFacts({ warmth: 2, category: "top" }), "Light");
+  assert.equal(clothFacts({ warmth: 2 }), "Light");
+  assert.equal(clothFacts({ warmth: 2, category: "shoes" }), "");
 });
