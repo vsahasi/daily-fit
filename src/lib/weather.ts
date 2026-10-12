@@ -134,7 +134,7 @@ export async function fetchWeather(opts: {
     "hourly",
     "temperature_2m,apparent_temperature,wind_speed_10m,sunshine_duration,weather_code,precipitation_probability,precipitation",
   );
-  url.searchParams.set("forecast_days", "3");
+  url.searchParams.set("forecast_days", "7");
   url.searchParams.set("temperature_unit", "fahrenheit");
   url.searchParams.set("wind_speed_unit", "mph");
 

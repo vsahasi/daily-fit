@@ -1,13 +1,36 @@
 import type { User } from "@prisma/client";
 import { prisma } from "@/lib/db";
-import { todayInZone } from "@/lib/dates";
+import { shiftDate, todayInZone } from "@/lib/dates";
 import { buildLikes } from "@/lib/likes";
 import { comboKeyFromIds, pickLook, swapPiece } from "@/lib/pair";
 import { prefsFromVotes } from "@/lib/prefs";
 import { everydayOccasion, occasionFromWeatherJson, type Occasion } from "@/lib/occasion";
+import { MAX_DAYS_AHEAD } from "@/lib/scenario";
 import type { Weather } from "@/lib/types";
 import { lookForDate, wearHistory } from "@/lib/wear";
-import { fetchWeather } from "@/lib/weather";
+import { fetchWeather, geocodeCity } from "@/lib/weather";
+
+type Spot = { latitude: number; longitude: number; timezone: string; locationLabel: string };
+
+/**
+ * The forecast a look is read against: home on the day asked for, or for an event, the
+ * place and the day the line named. A place that cannot be found is dressed at home.
+ */
+async function forecastFor(home: Spot, event: Occasion, day: string): Promise<Weather> {
+  let spot = home;
+  let base = day;
+  if (event.place) {
+    try {
+      const geo = await geocodeCity(event.place);
+      spot = { latitude: geo.latitude, longitude: geo.longitude, timezone: geo.timezone ?? home.timezone, locationLabel: geo.label };
+      base = todayInZone(spot.timezone);
+    } catch {
+      /* an unknown place is dressed at home */
+    }
+  }
+  const ahead = Math.min(event.dayOffset ?? 0, MAX_DAYS_AHEAD);
+  return fetchWeather({ ...spot, date: ahead > 0 ? shiftDate(base, ahead) : base });
+}
 
 /**
  * The look for a day, made on first ask. A suggestion that has since lost a piece to the
@@ -61,13 +84,11 @@ export async function generateOutfit(
     throw new Error("Set a city in Account, or send location from the iPhone Shortcut");
   }
 
-  const weather = await fetchWeather({
-    latitude: user.latitude,
-    longitude: user.longitude,
-    timezone: user.timezone,
-    locationLabel: user.locationLabel,
-    date: day,
-  });
+  const weather = await forecastFor(
+    { latitude: user.latitude, longitude: user.longitude, timezone: user.timezone, locationLabel: user.locationLabel },
+    event,
+    day,
+  );
 
   // An everyday "Another look" reads only everyday turn-downs; an event reads its own day's event looks.
   const earlier = await prisma.outfit.findMany({

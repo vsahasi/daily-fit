@@ -1,5 +1,6 @@
 "use server";
 
+import type { User } from "@prisma/client";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { clearSessionCookie } from "@/lib/auth";
@@ -9,9 +10,10 @@ import { ingestPhoto } from "@/lib/ingest";
 import { finishLaundry, markClean, putInWash } from "@/lib/laundry";
 import { sendEventPing, sendLookPing } from "@/lib/morning";
 import { generateOutfit, swapOutfitPiece } from "@/lib/outfit";
-import { parseOccasion } from "@/lib/occasion";
+import { occasionFromWeatherJson } from "@/lib/occasion";
 import { comboKeyFromIds } from "@/lib/pair";
 import { dismissIdea, suggestPurchases } from "@/lib/shop";
+import { readScenario } from "@/lib/scenario";
 import { refreshStyle } from "@/lib/style";
 import { getCurrentUser, revalidateUser } from "@/lib/user";
 import { deleteObject } from "@/lib/storage";
@@ -110,23 +112,49 @@ export async function skipTodayOutfit(formData?: FormData) {
   return makeTodayOutfit(formData);
 }
 
-export async function dressForEvent(formData: FormData) {
+/**
+ * The brief for a typed line. The same line sent again ("Not this", or the form sent
+ * twice) reuses the brief already read for it, so one round of looks answers one brief.
+ */
+async function eventBrief(user: User, scenario: string) {
+  const current = await prisma.outfit.findFirst({
+    where: { userId: user.id, date: `${todayInZone(user.timezone)}:event`, status: "event" },
+    orderBy: { createdAt: "desc" },
+  });
+  const stored = current ? occasionFromWeatherJson(current.weatherJson) : null;
+  if (stored && stored.label === scenario) return stored;
+  return readScenario(scenario, { today: todayInZone(user.timezone), timezone: user.timezone, home: user.locationLabel ?? "" });
+}
+
+/** "Dress me for this" and "Not this": a look for the line typed. A failure keeps the current look and says why. */
+async function dressEvent(scenario: string) {
   const user = await getCurrentUser();
+  const brief = await eventBrief(user, scenario);
+  let note = "";
+  await generateOutfit(user, false, brief).catch((error) => {
+    const message = error instanceof Error ? error.message : "";
+    note = /clean top/.test(message)
+      ? "That is every look that is clean for this."
+      : /Set a city|No forecast/.test(message)
+        ? message
+        : "Could not dress that just now. Try again in a minute.";
+  });
+  revalidatePath("/event");
+  if (note) redirect(`/event?note=${encodeURIComponent(note)}`);
+}
+
+export async function dressForEvent(formData: FormData) {
   const scenario = String(formData.get("scenario") ?? "").trim();
   if (!scenario) {
     throw new Error("Say what you’re dressing for");
   }
-  await generateOutfit(user, false, parseOccasion(scenario));
-  revalidatePath("/event");
+  await dressEvent(scenario);
 }
 
 export async function skipEventOutfit(formData: FormData) {
-  const user = await getCurrentUser();
   const scenario = String(formData.get("scenario") ?? "").trim();
-  if (scenario) {
-    await generateOutfit(user, false, parseOccasion(scenario));
-  }
-  revalidatePath("/event");
+  if (scenario) await dressEvent(scenario);
+  else revalidatePath("/event");
 }
 
 function revalidateCloset() {

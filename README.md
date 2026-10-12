@@ -68,7 +68,7 @@ An earlier version learned taste from swipes and collapsed into suggesting the s
 
 - **Today:** the look, every piece shown, with a one-line reason. Swap any single piece, ask for another look, or mark it worn.
 - **Wash tracking:** after wearing, each piece is marked wash or still good. Dirty pieces leave the pool.
-- **Events:** type "an interview" or "the gym" and it dresses for that, in that day's weather.
+- **Events:** describe what you're walking into the way you'd say it ("late night studying", "dinner tomorrow", "Boston day 1, cold"). A model reads the line into a brief: setting, formality, time of day, day, place, and any weather it states. The engine dresses that brief in the forecast for that place and day, and the page says what it read. A keyword reader stands in when the model is unreachable, so the page never fails on a parse.
 - **Shop:** a coded gap analysis finds what the closet cannot do yet, and a model only writes the specific piece. One idea arrives each Sunday.
 - **Notifications:** web push to an installed PWA at the hour you choose. An evening hour dresses tomorrow.
 

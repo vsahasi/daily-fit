@@ -3,7 +3,9 @@ import { test } from "node:test";
 import { comboKey } from "@/lib/combo";
 import { pairKind } from "@/lib/kinds";
 import { buildLikes } from "@/lib/likes";
-import { normalizeStack, pickLook, rankLooks, swapPiece } from "@/lib/pair";
+import { planDay } from "@/lib/bands";
+import { everydayOccasion } from "@/lib/occasion";
+import { normalizeStack, pickLook, rankLooks, swapPiece, weatherForOccasion } from "@/lib/pair";
 import { buildRecency } from "@/lib/rotation";
 import { testItem } from "@/lib/testing";
 import type { Weather } from "@/lib/types";
@@ -240,4 +242,53 @@ test("the same closet and forecast do not open with the same look every day", ()
     Array.from({ length: 12 }, (_, i) => comboKey(pickLook({ items: closet, weather: mild, skippedCombos: [], dateKey: `2026-10-${10 + i}:everyday` }).itemIds)),
   );
   assert.ok(firsts.size >= 2, "the opening look should vary across dates");
+});
+
+// ---------------------------------------------------------------------------------------
+// A brief that says when, or what the weather is, changes the forecast the look is read against.
+// ---------------------------------------------------------------------------------------
+
+test("a night brief on a warm day is dressed for the cool evening, not the afternoon high", () => {
+  const warmDay: Weather = {
+    ...mild,
+    tempMin: 55,
+    tempMax: 79,
+    code: 3,
+    summary: "overcast",
+    feel: {
+      high: 79, low: 56, lowEff: 54, dawn: 55, swing: 24, coolHours: 2, eveningEff: 58, windMax: 6, sunFrac: 0.3,
+      popOut: 0, precipHours: 0, drizzle: false, rain: false, heavyRain: false, fog: false, fogPastNoon: false,
+    },
+  };
+  const night = weatherForOccasion(warmDay, { ...everydayOccasion(), when: "night" });
+  assert.ok(night.tempMax <= 60, `night high ${night.tempMax}`);
+  assert.ok(night.tempMin >= 50 && night.tempMin <= night.tempMax, `night low ${night.tempMin}`);
+  assert.equal(planDay(night).sleeves, "any");
+  const evening = weatherForOccasion(warmDay, { ...everydayOccasion(), when: "evening" });
+  assert.ok(evening.tempMax >= night.tempMax && evening.tempMax <= 62, `evening high ${evening.tempMax}`);
+  assert.equal(weatherForOccasion(warmDay, everydayOccasion()), warmDay);
+});
+
+test("temperatures the line states replace the forecast", () => {
+  const stated = weatherForOccasion(mild, { ...everydayOccasion(), temps: { high: 45, low: 38 } });
+  assert.equal(stated.tempMax, 45);
+  assert.equal(stated.tempMin, 38);
+  assert.equal(planDay(stated).band, "freezing");
+  // "cold" alone is the coarse cap; a number is exact and wins over it.
+  const both = weatherForOccasion(mild, { ...everydayOccasion(), climate: "cold", temps: { high: 48, low: 40 } });
+  assert.equal(both.tempMax, 48);
+});
+
+test("a night look says the evening number in its reason, not the afternoon's", () => {
+  const warmDay: Weather = { ...mild, tempMin: 55, tempMax: 79, code: 3, summary: "overcast" };
+  const items = [whiteTee, greyTee, navyCargo, oliveCargo,
+    testItem({ id: "ls-henley", category: "top", name: "Charcoal waffle henley", warmth: 3, colorFamilies: '["grey"]', silhouette: "long sleeve" }),
+    testItem({ id: "fleece", category: "outer", name: "Black fleece jacket", warmth: 3, colorFamilies: '["black"]' }),
+  ];
+  const look = pickLook({ items, weather: warmDay, skippedCombos: [], occasion: { ...everydayOccasion(), label: "late night cold", when: "night" }, dateKey: "2026-10-12:late night cold" });
+  assert.doesNotMatch(look.reason, /79°/);
+  assert.match(look.reason, /tonight/);
+  // The layer is for the night, not for a morning that is not part of the brief.
+  assert.doesNotMatch(look.reason, /morning/);
+  assert.match(look.reason, /for the \d+° night/);
 });

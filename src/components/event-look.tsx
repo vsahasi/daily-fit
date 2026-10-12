@@ -43,10 +43,16 @@ function pickHero(pieces: Piece[]) {
 
 export function EventLook({
   scenario,
+  readAs,
+  forecastAt,
   reason,
   pieces,
 }: {
   scenario: string;
+  /** What the line was read as: "casual, at night, in the cold". */
+  readAs: string;
+  /** Where the forecast was read, when the line named a place that is not home. */
+  forecastAt: string;
   reason: string;
   pieces: Piece[];
 }) {
@@ -62,7 +68,7 @@ export function EventLook({
             name="scenario"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="Dinner tomorrow, an interview, the gym…"
+            placeholder="Dinner tomorrow, late night studying, Boston on Friday…"
             className="field"
             required
           />
@@ -76,6 +82,11 @@ export function EventLook({
         <article>
           <LookPhotos pieces={pieces} />
           <p className="mt-8 max-w-[38em] text-[17px] leading-relaxed">{reason}</p>
+          {readAs ? (
+            <p className="mt-3 text-[12px] text-mute">
+              Read as {readAs}.{forecastAt ? ` Forecast for ${forecastAt}.` : ""}
+            </p>
+          ) : null}
           <ul className="mt-8 divide-y divide-line border-y border-line">
             {pieces.map((piece) => (
               <li key={piece.id} className="flex items-center gap-4 py-3">

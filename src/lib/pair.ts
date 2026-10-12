@@ -1,5 +1,5 @@
 import type { Item } from "@prisma/client";
-import { planDay, type Band, type DayPlan } from "@/lib/bands";
+import { feelOf, planDay, type Band, type DayPlan } from "@/lib/bands";
 import { classicScore } from "@/lib/classic";
 import { BLACK_ON_BROWN, clashesWithBrown, isBlackShoe, shoeViolations, verdictForPlan, violationWeight, type Verdict } from "@/lib/climate";
 import { comboKey } from "@/lib/combo";
@@ -55,15 +55,34 @@ function isAthletic(item: Item) {
   return ["jersey", "athletic tee", "athletic short"].includes(pieceKind(item)) || /dri-fit|dri fit|performance|soccer|athletic/.test(hay(item));
 }
 
-/** A day the occasion overrides ("a hot day", the beach) is read from its daily numbers, not the hourly forecast. */
+/**
+ * The forecast after the occasion has had its say, read from daily numbers rather than
+ * the hourly day. An evening or a night is the cool end of the day: the 7pm felt
+ * number, and for a late night the slide from there toward the overnight low.
+ * Temperatures the line states win over the coarse "hot" and "cold" words.
+ */
 export function weatherForOccasion(weather: Weather, occasion: Occasion): Weather {
-  if (occasion.climate === "forecast") return weather;
+  const { when, temps, climate } = occasion;
+  if (climate === "forecast" && !temps && when !== "evening" && when !== "night") return weather;
   const { feel, feelsMax, feelsMin, outHigh, outLow, morning, windMax, ...daily } = weather;
   void feel; void feelsMax; void feelsMin; void outHigh; void outLow; void morning; void windMax;
-  if (occasion.climate === "hot") {
-    return { ...daily, tempMax: Math.max(84, weather.tempMax), tempMin: Math.max(70, weather.tempMin), summary: "warm", code: 0, precipProb: 0 };
+  let out: Weather = daily;
+  if (when === "evening" || when === "night") {
+    const evening = feelOf(weather).eveningEff;
+    const later = Math.round((evening + weather.tempMin) / 2);
+    const high = when === "evening" ? evening : later;
+    const low = when === "evening" ? later : weather.tempMin;
+    // No sun after dark either way: a clear code keeps the day read from docking five more for cloud.
+    out = { ...out, tempMax: Math.max(high, low), tempMin: Math.min(high, low), code: weather.code <= 3 ? 1 : weather.code };
   }
-  return { ...daily, tempMax: Math.min(52, weather.tempMax), tempMin: Math.min(40, weather.tempMin), summary: "cold" };
+  if (temps) return { ...out, tempMax: temps.high, tempMin: temps.low };
+  if (climate === "hot") {
+    return { ...out, tempMax: Math.max(84, out.tempMax), tempMin: Math.max(70, out.tempMin), summary: "warm", code: 0, precipProb: 0 };
+  }
+  if (climate === "cold") {
+    return { ...out, tempMax: Math.min(52, out.tempMax), tempMin: Math.min(40, out.tempMin), summary: "cold" };
+  }
+  return out;
 }
 
 /** Soft warmth targets by band: the sum of warmth across the clothes, shoes aside. */
@@ -343,6 +362,9 @@ export function scoreLook(
         reasons.unshift(`${piece} against the ${plan.windMax} mph wind`);
       } else if (plan.wet) {
         reasons.unshift(`${piece} for the drizzle`);
+      } else if (occasion.when === "night" || occasion.when === "evening") {
+        // The brief is the evening itself: the layer is for its temperature, not a morning.
+        reasons.unshift(`${piece} for the ${climate.tempMax}° ${occasion.when}`);
       } else if (/dinner|evening|night|date|party/i.test(occasion.label)) {
         reasons.unshift(`${piece} for the ${plan.evening}° evening`);
       } else if (plan.trigger && plan.layers.removable) {
@@ -746,12 +768,21 @@ function caption(
     if (occasion.label === "everyday") return `${names.join(", ")}. ${why}.`;
     return `${names.join(", ")}. ${occasion.label}. ${why}.`;
   }
-  const plan: DayPlan = planDay(weather);
+  const climate = weatherForOccasion(weather, occasion);
+  const plan: DayPlan = planDay(climate);
   const morning = plan.dawn;
   const weatherBit =
-    plan.trigger || weather.tempMax < 72
-      ? `${weather.tempMax}° after a ${morning}° morning, ${weather.summary}`
-      : `${weather.tempMax}° and ${weather.summary}`;
+    occasion.when === "night" || occasion.when === "evening"
+      ? `${climate.tempMax}° ${occasion.when === "night" ? "tonight" : "this evening"}, ${weather.summary}`
+      : occasion.temps
+        ? `${climate.tempMax}° by your count`
+        : occasion.climate === "hot"
+          ? "dressed for heat"
+          : occasion.climate === "cold"
+            ? "dressed for cold"
+            : plan.trigger || weather.tempMax < 72
+              ? `${weather.tempMax}° after a ${morning}° morning, ${weather.summary}`
+              : `${weather.tempMax}° and ${weather.summary}`;
   const eventBit = occasion.label === "everyday" ? weatherBit : `${occasion.label}, ${weatherBit}`;
   return `${names.join(", ")}. ${eventBit}. ${why}.`;
 }
